@@ -2,6 +2,7 @@ import {webContents} from 'electron';
 import {McpCaptureTargetsResult} from '../../common/mcp';
 import {isRegisteredWebview} from '../webview-registry';
 import {GetMainWindow, sendBridgeCommand} from './bridge';
+import {extractBodyText, extractTitle, parseElements, parseSeo} from './seoParser';
 
 const EXECUTE_TIMEOUT_MS = 10_000;
 const POST_INPUT_SETTLE_MS = 500;
@@ -21,6 +22,37 @@ export interface ReadPageResult {
     disabled?: boolean;
   }>;
   truncatedElements: boolean;
+  seo: {
+    titleCount: number;
+    titleLength: number;
+    metaDescription: string | null;
+    metaDescriptionCount: number;
+    canonical: string | null;
+    canonicalCount: number;
+    canonicalIsRelative: boolean;
+    canonicalHasFragment: boolean;
+    hreflang: string[];
+    hreflangHasSelf: boolean;
+    ogComplete: boolean;
+    twitterCard: boolean;
+    jsonLdTypes: string[];
+    jsonLdParseErrors: number;
+    h1Count: number;
+    h2Count: number;
+    h1SameAsTitle: boolean;
+    robotsMeta: string | null;
+    robotsNoindex: boolean;
+    robotsNofollow: boolean;
+    viewportSet: boolean;
+    imgTotal: number;
+    imgMissingAlt: number;
+    imgEmptyAlt: number;
+    imgAltOver100Chars: number;
+    emptyAnchorTextCount: number;
+    urlHasNonAscii: boolean;
+    urlHasUppercase: boolean;
+    urlHasTrackingParams: boolean;
+  };
 }
 
 export interface ClickResult {
@@ -42,15 +74,32 @@ const sleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
+// A webview freshly (re)created by a reload/toggle can take a moment to
+// reach dom-ready; until then getWebContentsId() throws and the bridge
+// reports it as "still loading". That's transient, not a real absence, so
+// it's worth a few short retries before surfacing the error to the caller.
+const STILL_LOADING_RETRY_ATTEMPTS = 4;
+const STILL_LOADING_RETRY_DELAY_MS = 500;
+
 const resolveTarget = async (
   getMainWindow: GetMainWindow,
   device?: string
 ): Promise<{deviceName: string; targetContents: Electron.WebContents}> => {
-  const {targets, skipped} = await sendBridgeCommand<McpCaptureTargetsResult>(
-    getMainWindow,
-    'get-capture-targets',
-    {device}
-  );
+  let targets: McpCaptureTargetsResult['targets'] = [];
+  let skipped: McpCaptureTargetsResult['skipped'] = [];
+  for (let attempt = 1; attempt <= STILL_LOADING_RETRY_ATTEMPTS; attempt += 1) {
+    ({targets, skipped} = await sendBridgeCommand<McpCaptureTargetsResult>(
+      getMainWindow,
+      'get-capture-targets',
+      {device}
+    ));
+    const stillLoading =
+      targets.length === 0 && skipped.some((s) => s.reason.includes('still loading'));
+    if (!stillLoading || attempt === STILL_LOADING_RETRY_ATTEMPTS) {
+      break;
+    }
+    await sleep(STILL_LOADING_RETRY_DELAY_MS);
+  }
   // Without a device filter the bridge returns previews in suite order, so
   // targets[0] is the primary device.
   const target = targets[0];
@@ -139,12 +188,112 @@ const READ_PAGE_SCRIPT = `
   const bodyText = (document.body ? document.body.innerText : '')
     .replace(/\\n{3,}/g, '\\n\\n')
     .slice(0, MAX_TEXT);
+  const metaContent = (selector) => {
+    const el = document.querySelector(selector);
+    return el ? el.getAttribute('content') : null;
+  };
+  const getHreflangAttr = (el) => el.getAttribute('hreflang') || el.getAttribute('hrefLang');
+  const hreflangEls = Array.from(document.querySelectorAll('link[rel="alternate"]')).filter(
+    (el) => Boolean(getHreflangAttr(el))
+  );
+  const hreflang = hreflangEls.map((el) => getHreflangAttr(el));
+  const normalizeUrl = (u) => {
+    let decoded = u || '';
+    try {
+      decoded = decodeURI(decoded);
+    } catch (e) {
+      // Leave as-is if it isn't validly encoded.
+    }
+    return decoded.replace(/\\/$/, '').toLowerCase();
+  };
+  const currentUrlNormalized = normalizeUrl(location.href);
+  const hreflangHasSelfRef = hreflangEls.some(
+    (el) => normalizeUrl(el.getAttribute('href')) === currentUrlNormalized
+  );
+  const jsonLdTypes = [];
+  let jsonLdParseErrors = 0;
+  document.querySelectorAll('script[type="application/ld+json"]').forEach((el) => {
+    try {
+      const parsed = JSON.parse(el.textContent);
+      const graph = parsed['@graph'] || [parsed];
+      graph.forEach((node) => node && node['@type'] && jsonLdTypes.push(node['@type']));
+    } catch (e) {
+      jsonLdParseErrors += 1;
+    }
+  });
+  const imgs = Array.from(document.querySelectorAll('img'));
+  let imgMissingAlt = 0;
+  let imgEmptyAlt = 0;
+  imgs.forEach((img) => {
+    if (!img.hasAttribute('alt')) imgMissingAlt += 1;
+    else if (img.getAttribute('alt') === '') imgEmptyAlt += 1;
+  });
+  const canonicalEls = Array.from(document.querySelectorAll('link[rel="canonical"]'));
+  const canonicalEl = canonicalEls[0];
+  const canonicalHref = canonicalEl ? canonicalEl.getAttribute('href') : null;
+  const titleEls = document.querySelectorAll('title');
+  const metaDescEls = document.querySelectorAll('meta[name="description"]');
+  const robotsMetaValue = metaContent('meta[name="robots"]');
+  const robotsLower = (robotsMetaValue || '').toLowerCase();
+  let imgAltOver100Chars = 0;
+  imgs.forEach((img) => {
+    const alt = img.getAttribute('alt');
+    if (alt && alt.length > 100) imgAltOver100Chars += 1;
+  });
+  const anchors = Array.from(document.querySelectorAll('a[href]'));
+  const emptyAnchorTextCount = anchors.filter((a) => {
+    const label = (a.innerText || a.getAttribute('aria-label') || '').trim();
+    if (label.length > 0) return false;
+    const hasDescriptiveImage = Array.from(a.querySelectorAll('img')).some(
+      (img) => (img.getAttribute('alt') || '').length > 0
+    );
+    return !hasDescriptiveImage;
+  }).length;
+  const seo = {
+    titleCount: titleEls.length,
+    titleLength: document.title.length,
+    metaDescription: metaContent('meta[name="description"]'),
+    metaDescriptionCount: metaDescEls.length,
+    canonical: canonicalHref,
+    canonicalCount: canonicalEls.length,
+    canonicalIsRelative: Boolean(canonicalHref && !/^https?:\\/\\//i.test(canonicalHref)),
+    canonicalHasFragment: Boolean(canonicalHref && canonicalHref.includes('#')),
+    hreflang,
+    hreflangHasSelf: hreflang.length === 0 || hreflangHasSelfRef,
+    ogComplete: Boolean(
+      document.querySelector('meta[property="og:title"]') &&
+        document.querySelector('meta[property="og:description"]') &&
+        document.querySelector('meta[property="og:image"]')
+    ),
+    twitterCard: Boolean(document.querySelector('meta[name^="twitter:"], meta[property^="twitter:"]')),
+    jsonLdTypes,
+    jsonLdParseErrors,
+    h1Count: document.querySelectorAll('h1').length,
+    h2Count: document.querySelectorAll('h2').length,
+    h1SameAsTitle: Boolean(
+      document.querySelector('h1') &&
+        document.querySelector('h1').innerText.trim() === document.title.trim()
+    ),
+    robotsMeta: robotsMetaValue,
+    robotsNoindex: robotsLower.includes('noindex'),
+    robotsNofollow: robotsLower.includes('nofollow'),
+    viewportSet: Boolean(document.querySelector('meta[name="viewport"]')),
+    imgTotal: imgs.length,
+    imgMissingAlt,
+    imgEmptyAlt,
+    imgAltOver100Chars,
+    emptyAnchorTextCount,
+    urlHasNonAscii: /[^\\x00-\\x7F]/.test(location.href),
+    urlHasUppercase: /[A-Z]/.test(location.pathname),
+    urlHasTrackingParams: /[?&](utm_|gclid|fbclid)/i.test(location.search),
+  };
   return {
     url: location.href,
     title: document.title,
     text: bodyText,
     elements,
     truncatedElements: candidates.length > MAX_ELEMENTS,
+    seo,
   };
 })()
 `;
@@ -192,16 +341,93 @@ interface LocateResult {
   text: string;
 }
 
+// When a page has JS execution disabled (Emulation.setScriptExecutionDisabled),
+// executeJavaScript() — which read_page normally uses — fails outright: the
+// script we'd inject to read the page is itself JavaScript. CDP's DOM domain
+// still works in that state (it walks the already-parsed render tree, not
+// the JS engine), so DOM.getOuterHTML gets us the full markup without
+// running anything, and we parse SEO/content out of it the same way the
+// raw-HTTP audit does. It's degraded — no live-DOM visibility filtering, no
+// real click targets, since nothing on the page can react to a click when
+// its handlers never attached — but it means title/meta/canonical/hreflang/
+// OG/JSON-LD/alt-text stay inspectable even on a JS-disabled screen.
+// A node id from DOM.getDocument is only valid until the next navigation —
+// if the guest reloads (a device add/remove cycle, a toggle) between that
+// call and DOM.getOuterHTML, CDP rejects the stale id with "Could not find
+// node with given id". Re-fetching a fresh id and retrying is cheap and
+// always safe, so it's worth a couple of attempts before giving up.
+const CDP_STALE_NODE_RETRY_ATTEMPTS = 3;
+
+const readPageViaCdp = async (
+  targetContents: Electron.WebContents
+): Promise<Omit<ReadPageResult, 'deviceName'>> => {
+  const {debugger: dbg} = targetContents;
+  const wasAttached = dbg.isAttached();
+  if (!wasAttached) {
+    dbg.attach();
+  }
+  try {
+    await dbg.sendCommand('DOM.enable');
+    let outerHTML: string | undefined;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= CDP_STALE_NODE_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        const {root} = await dbg.sendCommand('DOM.getDocument', {depth: -1, pierce: false});
+        ({outerHTML} = await dbg.sendCommand('DOM.getOuterHTML', {nodeId: root.nodeId}));
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < CDP_STALE_NODE_RETRY_ATTEMPTS) {
+          await sleep(300);
+        }
+      }
+    }
+    if (outerHTML === undefined) {
+      throw lastErr;
+    }
+    const {elements, truncated} = parseElements(outerHTML);
+    return {
+      url: targetContents.getURL(),
+      title: extractTitle(outerHTML),
+      text: extractBodyText(outerHTML),
+      elements,
+      truncatedElements: truncated,
+      seo: parseSeo(outerHTML),
+    };
+  } finally {
+    // Leave the debugger attached if something else (the JS-disable toggle
+    // itself, most likely, since that's the only way this path gets used)
+    // already had it attached before we got here — detaching would pull the
+    // rug out from under that feature's own CDP session.
+    if (!wasAttached) {
+      try {
+        dbg.detach();
+      } catch {
+        // Already gone; nothing to clean up.
+      }
+    }
+  }
+};
+
 export const readPage = async (
   getMainWindow: GetMainWindow,
   device?: string
 ): Promise<ReadPageResult> => {
   const {deviceName, targetContents} = await resolveTarget(getMainWindow, device);
-  const page = await executeInPage<Omit<ReadPageResult, 'deviceName'>>(
-    targetContents,
-    READ_PAGE_SCRIPT
-  );
-  return {deviceName, ...page};
+  try {
+    const page = await executeInPage<Omit<ReadPageResult, 'deviceName'>>(
+      targetContents,
+      READ_PAGE_SCRIPT
+    );
+    return {deviceName, ...page};
+  } catch {
+    // Script execution is the only thing that fails this way for a page
+    // that's otherwise loaded and responsive — fall back to the CDP-only
+    // path rather than surfacing an error that reads as "nothing to see
+    // here" when there's a whole page of SEO markup to report on.
+    const page = await readPageViaCdp(targetContents);
+    return {deviceName, ...page};
+  }
 };
 
 export const clickElement = async (
