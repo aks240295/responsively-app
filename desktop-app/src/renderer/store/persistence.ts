@@ -19,6 +19,8 @@ import {
   setSuiteDevices,
   setCanvasPosition,
   resetCanvasPositions,
+  setDeviceJavaScriptDisabled,
+  setDeviceNetworkScriptsBlocked,
 } from './features/device-manager';
 import {setDockPosition} from './features/devtools';
 import {
@@ -148,5 +150,29 @@ startListening({
   ),
   effect: (_action, api) => {
     window.electron.store.set('deviceManager.previewSuites', api.getState().deviceManager.suites);
+  },
+});
+
+// Unlike individualRotations, a lingering JS-disable/network-block on a named
+// "Disable JS"/"Block JS Network" device is meant to survive a restart — the
+// device name is itself the reminder of what's armed, so there's no silent
+// surprise the way there would be for an arbitrary device losing rotation.
+startListening({
+  actionCreator: setDeviceJavaScriptDisabled,
+  effect: (_action, api) => {
+    window.electron.store.set(
+      'deviceManager.disabledJavaScript',
+      api.getState().deviceManager.disabledJavaScript
+    );
+  },
+});
+
+startListening({
+  actionCreator: setDeviceNetworkScriptsBlocked,
+  effect: (_action, api) => {
+    window.electron.store.set(
+      'deviceManager.networkScriptsBlocked',
+      api.getState().deviceManager.networkScriptsBlocked
+    );
   },
 });

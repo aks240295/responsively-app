@@ -85,8 +85,12 @@ export const buildPreloadedState = () => {
       activeSuite: DEFAULT_SUITE.id,
       suites,
       individualRotations: {},
-      disabledJavaScript: {},
-      networkScriptsBlocked: {},
+      disabledJavaScript:
+        (store.get('deviceManager.disabledJavaScript') as Record<string, boolean> | undefined) ??
+        {},
+      networkScriptsBlocked:
+        (store.get('deviceManager.networkScriptsBlocked') as Record<string, boolean> | undefined) ??
+        {},
     },
   };
 };

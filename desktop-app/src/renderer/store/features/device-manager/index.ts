@@ -24,13 +24,15 @@ export interface DeviceManagerState {
   // Per-device rotation (session state, not persisted). The global rotate
   // flag lives in the renderer slice; a device is rotated when either is set.
   individualRotations: Record<string, boolean>;
-  // Per-device JavaScript-disabled flag (session state, not persisted, same
-  // reasoning as individualRotations — a website silently losing JS across
-  // app restarts would be confusing).
+  // Per-device JavaScript-disabled flag, persisted (see persistence.ts) and
+  // re-applied to a fresh webContents by useJavaScriptToggle. Unlike
+  // individualRotations, this is deliberately remembered across restarts —
+  // the device is normally a dedicated "Disable JS"-named one, so the name
+  // itself is the reminder of what's armed.
   disabledJavaScript: Record<string, boolean>;
-  // Per-device network-level script-blocking flag (session state, not
-  // persisted). Distinct from disabledJavaScript: the JS engine stays on,
-  // only script network requests are cancelled — see network-script-blocker.
+  // Per-device network-level script-blocking flag, persisted the same way.
+  // Distinct from disabledJavaScript: the JS engine stays on, only script
+  // network requests are cancelled — see network-script-blocker.
   networkScriptsBlocked: Record<string, boolean>;
 }
 
