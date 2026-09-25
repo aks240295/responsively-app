@@ -37,7 +37,7 @@ export const extractTitle = (html: string): string => {
   return m ? decodeEntities(m[1]).trim() : '';
 };
 
-export const parseSeo = (html: string): ReadPageResult['seo'] => {
+export const parseSeo = (html: string, currentUrl: string): ReadPageResult['seo'] => {
   const titleMatches = html.match(/<title[^>]*>/gi) || [];
   const metaDescMatches = Array.from(
     html.matchAll(/<meta\s+[^>]*name\s*=\s*["']description["'][^>]*>/gi)
@@ -129,6 +129,20 @@ export const parseSeo = (html: string): ReadPageResult['seo'] => {
     return !hasDescriptiveImage;
   }).length;
 
+  // The raw-HTML parse has no notion of the page's own URL, but the caller
+  // (readPageViaCdp) always has one (webContents.getURL()) — pass it through
+  // so a JS-disabled/network-blocked audit flags URL hygiene issues too,
+  // instead of silently reporting false on all three every time.
+  let pathname = '';
+  let search = '';
+  try {
+    const parsedUrl = new URL(currentUrl);
+    pathname = parsedUrl.pathname;
+    search = parsedUrl.search;
+  } catch {
+    // currentUrl wasn't a valid absolute URL; leave hygiene checks at their defaults.
+  }
+
   return {
     titleCount: titleMatches.length,
     titleLength: extractTitle(html).length,
@@ -156,9 +170,9 @@ export const parseSeo = (html: string): ReadPageResult['seo'] => {
     imgEmptyAlt,
     imgAltOver100Chars,
     emptyAnchorTextCount,
-    urlHasNonAscii: false,
-    urlHasUppercase: false,
-    urlHasTrackingParams: false,
+    urlHasNonAscii: Array.from(currentUrl).some((ch) => (ch.codePointAt(0) ?? 0) > 127),
+    urlHasUppercase: /[A-Z]/.test(pathname),
+    urlHasTrackingParams: /[?&](utm_|gclid|fbclid)/i.test(search),
   };
 };
 

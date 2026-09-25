@@ -12,7 +12,7 @@ import {
 } from '../../common/mcp';
 import {captureImage} from '../screenshot';
 import {GetMainWindow, sendBridgeCommand} from './bridge';
-import {clickElement, readPage, typeText} from './interactions';
+import {clickElement, readAllPages, readPage, typeText} from './interactions';
 import {toolDefs} from './toolDefs';
 import {normalizeUrl} from './utils';
 
@@ -135,6 +135,14 @@ export const registerTools = (server: McpServer, getMainWindow: GetMainWindow) =
   server.registerTool('read_page', toolDefs.read_page, async ({device}) => {
     try {
       return textResult(await readPage(getMainWindow, device));
+    } catch (error) {
+      return errorResult(error);
+    }
+  });
+
+  server.registerTool('read_all_pages', toolDefs.read_all_pages, async () => {
+    try {
+      return textResult(await readAllPages(getMainWindow));
     } catch (error) {
       return errorResult(error);
     }

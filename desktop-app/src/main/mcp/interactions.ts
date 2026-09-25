@@ -2,6 +2,8 @@ import {webContents} from 'electron';
 import {McpCaptureTargetsResult} from '../../common/mcp';
 import {isRegisteredWebview} from '../webview-registry';
 import {GetMainWindow, sendBridgeCommand} from './bridge';
+import {buildSeoAuditReport, SeoAuditReport} from './seoAudit';
+import {extractSeoFromDocument} from './seoDomExtractor';
 import {extractBodyText, extractTitle, parseElements, parseSeo} from './seoParser';
 
 const EXECUTE_TIMEOUT_MS = 10_000;
@@ -53,6 +55,7 @@ export interface ReadPageResult {
     urlHasUppercase: boolean;
     urlHasTrackingParams: boolean;
   };
+  report: SeoAuditReport;
 }
 
 export interface ClickResult {
@@ -188,105 +191,8 @@ const READ_PAGE_SCRIPT = `
   const bodyText = (document.body ? document.body.innerText : '')
     .replace(/\\n{3,}/g, '\\n\\n')
     .slice(0, MAX_TEXT);
-  const metaContent = (selector) => {
-    const el = document.querySelector(selector);
-    return el ? el.getAttribute('content') : null;
-  };
-  const getHreflangAttr = (el) => el.getAttribute('hreflang') || el.getAttribute('hrefLang');
-  const hreflangEls = Array.from(document.querySelectorAll('link[rel="alternate"]')).filter(
-    (el) => Boolean(getHreflangAttr(el))
-  );
-  const hreflang = hreflangEls.map((el) => getHreflangAttr(el));
-  const normalizeUrl = (u) => {
-    let decoded = u || '';
-    try {
-      decoded = decodeURI(decoded);
-    } catch (e) {
-      // Leave as-is if it isn't validly encoded.
-    }
-    return decoded.replace(/\\/$/, '').toLowerCase();
-  };
-  const currentUrlNormalized = normalizeUrl(location.href);
-  const hreflangHasSelfRef = hreflangEls.some(
-    (el) => normalizeUrl(el.getAttribute('href')) === currentUrlNormalized
-  );
-  const jsonLdTypes = [];
-  let jsonLdParseErrors = 0;
-  document.querySelectorAll('script[type="application/ld+json"]').forEach((el) => {
-    try {
-      const parsed = JSON.parse(el.textContent);
-      const graph = parsed['@graph'] || [parsed];
-      graph.forEach((node) => node && node['@type'] && jsonLdTypes.push(node['@type']));
-    } catch (e) {
-      jsonLdParseErrors += 1;
-    }
-  });
-  const imgs = Array.from(document.querySelectorAll('img'));
-  let imgMissingAlt = 0;
-  let imgEmptyAlt = 0;
-  imgs.forEach((img) => {
-    if (!img.hasAttribute('alt')) imgMissingAlt += 1;
-    else if (img.getAttribute('alt') === '') imgEmptyAlt += 1;
-  });
-  const canonicalEls = Array.from(document.querySelectorAll('link[rel="canonical"]'));
-  const canonicalEl = canonicalEls[0];
-  const canonicalHref = canonicalEl ? canonicalEl.getAttribute('href') : null;
-  const titleEls = document.querySelectorAll('title');
-  const metaDescEls = document.querySelectorAll('meta[name="description"]');
-  const robotsMetaValue = metaContent('meta[name="robots"]');
-  const robotsLower = (robotsMetaValue || '').toLowerCase();
-  let imgAltOver100Chars = 0;
-  imgs.forEach((img) => {
-    const alt = img.getAttribute('alt');
-    if (alt && alt.length > 100) imgAltOver100Chars += 1;
-  });
-  const anchors = Array.from(document.querySelectorAll('a[href]'));
-  const emptyAnchorTextCount = anchors.filter((a) => {
-    const label = (a.innerText || a.getAttribute('aria-label') || '').trim();
-    if (label.length > 0) return false;
-    const hasDescriptiveImage = Array.from(a.querySelectorAll('img')).some(
-      (img) => (img.getAttribute('alt') || '').length > 0
-    );
-    return !hasDescriptiveImage;
-  }).length;
-  const seo = {
-    titleCount: titleEls.length,
-    titleLength: document.title.length,
-    metaDescription: metaContent('meta[name="description"]'),
-    metaDescriptionCount: metaDescEls.length,
-    canonical: canonicalHref,
-    canonicalCount: canonicalEls.length,
-    canonicalIsRelative: Boolean(canonicalHref && !/^https?:\\/\\//i.test(canonicalHref)),
-    canonicalHasFragment: Boolean(canonicalHref && canonicalHref.includes('#')),
-    hreflang,
-    hreflangHasSelf: hreflang.length === 0 || hreflangHasSelfRef,
-    ogComplete: Boolean(
-      document.querySelector('meta[property="og:title"]') &&
-        document.querySelector('meta[property="og:description"]') &&
-        document.querySelector('meta[property="og:image"]')
-    ),
-    twitterCard: Boolean(document.querySelector('meta[name^="twitter:"], meta[property^="twitter:"]')),
-    jsonLdTypes,
-    jsonLdParseErrors,
-    h1Count: document.querySelectorAll('h1').length,
-    h2Count: document.querySelectorAll('h2').length,
-    h1SameAsTitle: Boolean(
-      document.querySelector('h1') &&
-        document.querySelector('h1').innerText.trim() === document.title.trim()
-    ),
-    robotsMeta: robotsMetaValue,
-    robotsNoindex: robotsLower.includes('noindex'),
-    robotsNofollow: robotsLower.includes('nofollow'),
-    viewportSet: Boolean(document.querySelector('meta[name="viewport"]')),
-    imgTotal: imgs.length,
-    imgMissingAlt,
-    imgEmptyAlt,
-    imgAltOver100Chars,
-    emptyAnchorTextCount,
-    urlHasNonAscii: /[^\\x00-\\x7F]/.test(location.href),
-    urlHasUppercase: /[A-Z]/.test(location.pathname),
-    urlHasTrackingParams: /[?&](utm_|gclid|fbclid)/i.test(location.search),
-  };
+  const extractSeoFromDocument = ${extractSeoFromDocument.toString()};
+  const seo = extractSeoFromDocument(document, location.href);
   return {
     url: location.href,
     title: document.title,
@@ -386,13 +292,16 @@ const readPageViaCdp = async (
       throw lastErr;
     }
     const {elements, truncated} = parseElements(outerHTML);
+    const url = targetContents.getURL();
+    const seo = parseSeo(outerHTML, url);
     return {
-      url: targetContents.getURL(),
+      url,
       title: extractTitle(outerHTML),
       text: extractBodyText(outerHTML),
       elements,
       truncatedElements: truncated,
-      seo: parseSeo(outerHTML),
+      seo,
+      report: buildSeoAuditReport(seo),
     };
   } finally {
     // Leave the debugger attached if something else (the JS-disable toggle
@@ -415,11 +324,11 @@ export const readPage = async (
 ): Promise<ReadPageResult> => {
   const {deviceName, targetContents} = await resolveTarget(getMainWindow, device);
   try {
-    const page = await executeInPage<Omit<ReadPageResult, 'deviceName'>>(
+    const page = await executeInPage<Omit<ReadPageResult, 'deviceName' | 'report'>>(
       targetContents,
       READ_PAGE_SCRIPT
     );
-    return {deviceName, ...page};
+    return {deviceName, ...page, report: buildSeoAuditReport(page.seo)};
   } catch {
     // Script execution is the only thing that fails this way for a page
     // that's otherwise loaded and responsive — fall back to the CDP-only
@@ -428,6 +337,39 @@ export const readPage = async (
     const page = await readPageViaCdp(targetContents);
     return {deviceName, ...page};
   }
+};
+
+export interface ReadAllPagesResult {
+  pages: ReadPageResult[];
+  skipped: Array<{deviceName: string; reason: string}>;
+}
+
+export const readAllPages = async (getMainWindow: GetMainWindow): Promise<ReadAllPagesResult> => {
+  const {targets, skipped} = await sendBridgeCommand<McpCaptureTargetsResult>(
+    getMainWindow,
+    'get-capture-targets',
+    {}
+  );
+  // Each device is read independently (readPage() re-resolves its own target
+  // rather than reusing `targets` directly) so one device going away between
+  // this listing and its own read — or failing outright — can't take down
+  // the rest of the batch; it just moves from `pages` to `skipped`.
+  const results = await Promise.allSettled(
+    targets.map((target) => readPage(getMainWindow, target.deviceName))
+  );
+  const pages: ReadPageResult[] = [];
+  const allSkipped: Array<{deviceName: string; reason: string}> = [...skipped];
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      pages.push(result.value);
+    } else {
+      allSkipped.push({
+        deviceName: targets[index].deviceName,
+        reason: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      });
+    }
+  });
+  return {pages, skipped: allSkipped};
 };
 
 export const clickElement = async (

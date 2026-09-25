@@ -41,13 +41,39 @@ export const toolDefs = {
     description:
       'Read the page rendered in a Responsively App device preview: the page text plus its ' +
       'interactive elements (links, buttons, form fields) with CSS selectors usable with the ' +
-      'click and type_text tools. Defaults to the primary (first) device preview.',
+      'click and type_text tools, and the SEO audit (raw seo fields plus a report of ' +
+      'findings/severity counts). Defaults to the primary (first) device preview. See ' +
+      "read_all_pages's description for the recommended column layout when exporting results " +
+      'across many pages/devices as a flat table (CSV).',
     inputSchema: {
       device: z
         .string()
         .optional()
         .describe('Optional device id or exact name; omit to read the primary device'),
     },
+  },
+  read_all_pages: {
+    description:
+      'Read every currently active Responsively App device preview at once — the same data ' +
+      'read_page returns (page text, interactive elements, and the full SEO audit: raw seo ' +
+      'fields plus report findings/severity counts) for each active device in one call, so an ' +
+      'N-device preview set (JS-enabled, JS-disabled, network-blocked, different viewports, ' +
+      "etc.) doesn't need one read_page call per device. Takes no arguments — reads whatever " +
+      'is currently active. A device that could not be read (e.g. its preview just closed) is ' +
+      'listed under "skipped" with a reason instead of failing the whole call.\n\n' +
+      'Recommended raw/CSV export layout: when asked to export results across many pages and ' +
+      'devices as a flat table (e.g. a CSV to open in a spreadsheet), use one row per ' +
+      '(page, device) pair with these columns, in this order: Page, Device, NavOk, Success, ' +
+      'Error, Url, TextLen, Title, TitleCount, MetaDescLen, MetaDescCount, Canonical, ' +
+      'CanonicalCount, CanonicalIsRelative, CanonicalHasFragment, HreflangCount, ' +
+      'HreflangHasSelf, OgComplete, TwitterCard, JsonLdTypes (semicolon-joined), ' +
+      'JsonLdParseErrors, H1Count, H2Count, H1SameAsTitle, RobotsMeta, RobotsNoindex, ' +
+      'RobotsNofollow, ViewportSet, ImgTotal, ImgMissingAlt, ImgEmptyAlt, ImgAltOver100Chars, ' +
+      'EmptyAnchorTextCount, UrlHasNonAscii, UrlHasUppercase, UrlHasTrackingParams, ' +
+      'CriticalCount, WarningCount, OpportunityCount, FindingIds (semicolon-joined report ' +
+      'finding ids). Page/Device/NavOk/Success/Error/Url/TextLen come from the call context ' +
+      'and the page/text/url fields; every other column is the seo field or report count of ' +
+      'the same name.',
   },
   click: {
     description:

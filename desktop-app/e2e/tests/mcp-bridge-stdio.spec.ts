@@ -10,6 +10,7 @@ const EXPECTED_TOOLS = [
   'get_app_state',
   'list_devices',
   'navigate',
+  'read_all_pages',
   'read_page',
   'screenshot',
   'set_active_devices',
