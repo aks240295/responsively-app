@@ -167,6 +167,13 @@ const CHECKS: SeoCheck[] = [
     test: (seo) => seo.urlHasTrackingParams,
     message: () => 'URL contains tracking parameters (utm_/gclid/fbclid).',
   },
+  {
+    id: 'iframe-external-content',
+    severity: 'warning',
+    test: (seo) => seo.iframeExternalDomains.length > 0,
+    message: (seo) =>
+      `Page embeds ${seo.iframeExternalDomains.length} external-domain iframe(s) (${seo.iframeExternalDomains.join(', ')}); their content is excluded from this audit and may be invisible to crawlers too.`,
+  },
 ];
 
 export const buildSeoAuditReport = (seo: SeoData): SeoAuditReport => {

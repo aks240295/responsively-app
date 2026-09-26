@@ -55,4 +55,32 @@ describe('buildSeoAuditReport', () => {
     const reportB = buildSeoAuditReport(seo);
     expect(reportA).toEqual(reportB);
   });
+
+  it('flags a page embedding an external-domain iframe, naming the domain', () => {
+    const html = `<!doctype html>
+<html><head><title>Sports betting</title></head>
+<body>
+  <h1>Bet on football</h1>
+  <iframe src="https://z2w0ob.sgf4yjf8.com/Newindex?lang=th"></iframe>
+</body></html>`;
+    const seo = parseSeo(html, 'https://www.fun88thn.com/th/football/');
+    const report = buildSeoAuditReport(seo);
+    const finding = report.findings.find((f) => f.id === 'iframe-external-content');
+    expect(finding).toBeDefined();
+    expect(finding?.severity).toBe('warning');
+    expect(finding?.message).toContain('z2w0ob.sgf4yjf8.com');
+  });
+
+  it('does not flag iframe-external-content when there is no iframe, or only a same-domain one', () => {
+    const seo = parseSeo(GOOD_HTML, 'https://example.com/page');
+    const report = buildSeoAuditReport(seo);
+    expect(report.findings.map((f) => f.id)).not.toContain('iframe-external-content');
+
+    const sameDomainHtml = `<!doctype html>
+<html><head><title>t</title></head>
+<body><iframe src="/widget"></iframe></body></html>`;
+    const sameDomainSeo = parseSeo(sameDomainHtml, 'https://example.com/page');
+    const sameDomainReport = buildSeoAuditReport(sameDomainSeo);
+    expect(sameDomainReport.findings.map((f) => f.id)).not.toContain('iframe-external-content');
+  });
 });

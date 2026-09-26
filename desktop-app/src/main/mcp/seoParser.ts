@@ -119,6 +119,30 @@ export const parseSeo = (html: string, currentUrl: string): ReadPageResult['seo'
     else if (alt.length > 100) imgAltOver100Chars += 1;
   });
 
+  // Same rationale as the live-DOM path: an iframe's rendered content is
+  // never present in this raw HTML string in the first place (the browser
+  // fetches a frame's document separately from the page that embeds it), so
+  // this only surfaces THAT external iframes exist, never their content.
+  let pageHostname = '';
+  try {
+    pageHostname = new URL(currentUrl).hostname.toLowerCase();
+  } catch {
+    // currentUrl wasn't a valid absolute URL; every iframe host below will
+    // then be treated as external, which is the safer default.
+  }
+  const iframeTags = Array.from(html.matchAll(/<iframe\b[^>]*>/gi)).map((m) => m[0]);
+  const externalIframeHosts = new Set<string>();
+  iframeTags.forEach((tag) => {
+    const src = attr(tag, 'src');
+    if (!src) return;
+    try {
+      const hostname = new URL(src, currentUrl).hostname.toLowerCase();
+      if (hostname && hostname !== pageHostname) externalIframeHosts.add(hostname);
+    } catch {
+      // Unparsable src (e.g. about:blank, javascript:, srcdoc-only) — skip.
+    }
+  });
+
   const anchorBlocks = Array.from(
     html.matchAll(/<a\s+[^>]*href\s*=\s*["'][^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)
   );
@@ -173,6 +197,8 @@ export const parseSeo = (html: string, currentUrl: string): ReadPageResult['seo'
     urlHasNonAscii: Array.from(currentUrl).some((ch) => (ch.codePointAt(0) ?? 0) > 127),
     urlHasUppercase: /[A-Z]/.test(pathname),
     urlHasTrackingParams: /[?&](utm_|gclid|fbclid)/i.test(search),
+    iframeCount: iframeTags.length,
+    iframeExternalDomains: Array.from(externalIframeHosts),
   };
 };
 

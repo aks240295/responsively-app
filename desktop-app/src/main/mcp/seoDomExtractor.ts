@@ -112,6 +112,32 @@ export const extractSeoFromDocument = (doc: Document, currentUrl: string): SeoDa
     // currentUrl wasn't a valid absolute URL; leave hygiene checks at their defaults.
   }
 
+  // Cross-origin iframe content (live-casino widgets, sportsbook embeds,
+  // etc.) is never visible to this function in the first place — the
+  // iframe's rendered document is a separate Document object that
+  // querySelectorAll/innerText on `doc` structurally cannot reach, regardless
+  // of same-origin or cross-origin. This just surfaces THAT such iframes
+  // exist, for audit transparency, without ever reading their content.
+  let pageHostname = '';
+  try {
+    pageHostname = new URL(currentUrl).hostname.toLowerCase();
+  } catch {
+    // currentUrl wasn't a valid absolute URL; every iframe host below will
+    // then be treated as external, which is the safer default.
+  }
+  const iframeEls = Array.from(doc.querySelectorAll('iframe'));
+  const externalIframeHosts = new Set<string>();
+  iframeEls.forEach((el) => {
+    const src = el.getAttribute('src');
+    if (!src) return;
+    try {
+      const hostname = new URL(src, currentUrl).hostname.toLowerCase();
+      if (hostname && hostname !== pageHostname) externalIframeHosts.add(hostname);
+    } catch {
+      // Unparsable src (e.g. about:blank, javascript:, srcdoc-only) — skip.
+    }
+  });
+
   const h1El = doc.querySelector('h1');
   const titleText = doc.title.trim();
 
@@ -149,5 +175,7 @@ export const extractSeoFromDocument = (doc: Document, currentUrl: string): SeoDa
     urlHasNonAscii: Array.from(currentUrl).some((ch) => (ch.codePointAt(0) ?? 0) > 127),
     urlHasUppercase: /[A-Z]/.test(pathname),
     urlHasTrackingParams: /[?&](utm_|gclid|fbclid)/i.test(search),
+    iframeCount: iframeEls.length,
+    iframeExternalDomains: Array.from(externalIframeHosts),
   };
 };

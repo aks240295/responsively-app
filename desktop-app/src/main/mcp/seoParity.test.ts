@@ -71,4 +71,27 @@ describe('seo extraction parity (live DOM vs regex fallback)', () => {
     expect(domResult.urlHasTrackingParams).toBe(true);
     expect(domResult).toEqual(regexResult);
   });
+
+  it('reports external iframe hostnames without ever reading their content, identically on both paths', () => {
+    const html = `<!doctype html>
+<html><head><title>Sports betting</title></head>
+<body>
+  <h1>Bet on football</h1>
+  <iframe id="setIframe" src="https://z2w0ob.sgf4yjf8.com/Newindex?lang=th"></iframe>
+  <iframe src="/same-domain-widget"></iframe>
+</body></html>`;
+    const url = 'https://www.fun88thn.com/th/football/';
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const domResult = extractSeoFromDocument(doc, url);
+    const regexResult = parseSeo(html, url);
+
+    // Two iframes total, but only the cross-origin one counts as "external".
+    expect(domResult.iframeCount).toBe(2);
+    expect(domResult.iframeExternalDomains).toEqual(['z2w0ob.sgf4yjf8.com']);
+    // Neither path ever reads iframe content — the DOM one structurally
+    // can't (contentDocument is a separate Document object it never
+    // touches), and the raw-HTML one only sees whatever was server-rendered,
+    // which is just the <iframe src="..."> tag itself, not its content.
+    expect(domResult).toEqual(regexResult);
+  });
 });

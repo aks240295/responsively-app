@@ -70,10 +70,14 @@ export const toolDefs = {
       'JsonLdParseErrors, H1Count, H2Count, H1SameAsTitle, RobotsMeta, RobotsNoindex, ' +
       'RobotsNofollow, ViewportSet, ImgTotal, ImgMissingAlt, ImgEmptyAlt, ImgAltOver100Chars, ' +
       'EmptyAnchorTextCount, UrlHasNonAscii, UrlHasUppercase, UrlHasTrackingParams, ' +
+      'IframeCount, IframeExternalDomains (semicolon-joined hostnames), ' +
       'CriticalCount, WarningCount, OpportunityCount, FindingIds (semicolon-joined report ' +
       'finding ids). Page/Device/NavOk/Success/Error/Url/TextLen come from the call context ' +
       'and the page/text/url fields; every other column is the seo field or report count of ' +
-      'the same name.',
+      "the same name. Note: an external-domain iframe's own content (a casino widget, a " +
+      'sportsbook embed, etc.) is never read into any of these fields — only that such an ' +
+      'iframe exists is reported (IframeCount/IframeExternalDomains and the ' +
+      'iframe-external-content finding).',
   },
   click: {
     description:

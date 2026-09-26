@@ -54,6 +54,8 @@ export interface ReadPageResult {
     urlHasNonAscii: boolean;
     urlHasUppercase: boolean;
     urlHasTrackingParams: boolean;
+    iframeCount: number;
+    iframeExternalDomains: string[];
   };
   report: SeoAuditReport;
 }
